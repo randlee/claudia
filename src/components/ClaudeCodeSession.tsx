@@ -457,6 +457,11 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = ({
         const attachSessionSpecificListeners = async (sid: string) => {
           console.log('[ClaudeCodeSession] Attaching session-specific listeners for', sid);
 
+          // FIRST: Clean up existing generic listeners immediately to prevent overlap
+          unlistenRefs.current.forEach((u) => u());
+          unlistenRefs.current = [];
+
+          // THEN: Set up session-specific listeners
           const specificOutputUnlisten = await listen<string>(`claude-output:${sid}`, (evt) => {
             handleStreamMessage(evt.payload);
           });
@@ -471,8 +476,7 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = ({
             processComplete(evt.payload);
           });
 
-          // Replace existing unlisten refs with these new ones (after cleaning up)
-          unlistenRefs.current.forEach((u) => u());
+          // Store the new listeners
           unlistenRefs.current = [specificOutputUnlisten, specificErrorUnlisten, specificCompleteUnlisten];
         };
 
@@ -514,7 +518,31 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = ({
             setRawJsonlOutput((prev) => [...prev, payload]);
 
             const message = JSON.parse(payload) as ClaudeStreamMessage;
-            setMessages((prev) => [...prev, message]);
+            
+            // Add message deduplication to prevent 4x duplication from multiple listeners
+            const messageKey = `${message.type}-${message.timestamp || Date.now()}-${JSON.stringify(message.content || message.message || message.result || '').slice(0, 50)}`;
+            
+            setMessages((prev) => {
+              // Check if message already exists by ID (primary) or content similarity (fallback)
+              const exists = prev.some(msg => {
+                // Primary check: same message ID
+                if (message.id && msg.id && message.id === msg.id) return true;
+                
+                // Secondary check: same messageKey (handles cases without IDs)
+                if ((msg as any).messageKey === messageKey) return true;
+                
+                // Tertiary check: exact JSON match (final fallback)  
+                return JSON.stringify(msg) === JSON.stringify(message);
+              });
+              
+              if (exists) {
+                console.log('Duplicate message prevented:', messageKey);
+                return prev;
+              }
+              
+              // Add messageKey to the message for future deduplication
+              return [...prev, { ...message, messageKey }];
+            });
           } catch (err) {
             console.error('Failed to parse message:', err, payload);
           }
