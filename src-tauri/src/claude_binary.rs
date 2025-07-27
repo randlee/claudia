@@ -166,8 +166,18 @@ fn discover_system_installations() -> Vec<ClaudeInstallation> {
 
 /// Try using the 'which' command to find Claude
 fn try_which_command() -> Option<ClaudeInstallation> {
-    debug!("Trying 'which claude' to find binary...");
+    debug!("Trying to find Claude binary...");
 
+    // Try different approaches based on OS
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, try 'where' command instead of 'which'
+        if let Some(installation) = try_windows_where_command() {
+            return Some(installation);
+        }
+    }
+
+    // Try Unix-style 'which' command
     match Command::new("which").arg("claude").output() {
         Ok(output) if output.status.success() => {
             let output_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -204,7 +214,55 @@ fn try_which_command() -> Option<ClaudeInstallation> {
                 installation_type: InstallationType::System,
             })
         }
-        _ => None,
+        _ => {
+            debug!("'which' command failed or not found");
+            None
+        }
+    }
+}
+
+/// Windows-specific function to use 'where' command
+#[cfg(target_os = "windows")]
+fn try_windows_where_command() -> Option<ClaudeInstallation> {
+    debug!("Trying 'where claude' on Windows...");
+
+    match Command::new("where").arg("claude").output() {
+        Ok(output) if output.status.success() => {
+            let output_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            
+            if output_str.is_empty() {
+                return None;
+            }
+
+            // 'where' can return multiple paths, take the first one
+            let path = output_str.lines().next()?.trim().to_string();
+            
+            debug!("'where' found claude at: {}", path);
+
+            // Verify the path exists
+            if !PathBuf::from(&path).exists() {
+                warn!("Path from 'where' does not exist: {}", path);
+                return None;
+            }
+
+            // Get version
+            let version = get_claude_version(&path).ok().flatten();
+
+            Some(ClaudeInstallation {
+                path,
+                version,
+                source: "where".to_string(),
+                installation_type: InstallationType::System,
+            })
+        }
+        Ok(_) => {
+            debug!("'where' command did not succeed");
+            None
+        }
+        Err(e) => {
+            debug!("'where' command failed: {}", e);
+            None
+        }
     }
 }
 
@@ -264,7 +322,47 @@ fn find_standard_installations() -> Vec<ClaudeInstallation> {
         ("/bin/claude".to_string(), "system".to_string()),
     ];
 
-    // Also check user-specific paths
+    // Add Windows-specific paths
+    #[cfg(target_os = "windows")]
+    {
+        // Check APPDATA paths on Windows
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            paths_to_check.extend(vec![
+                (
+                    format!("{}\\npm\\claude", appdata),
+                    "npm-windows".to_string(),
+                ),
+                (
+                    format!("{}\\npm\\claude.cmd", appdata),
+                    "npm-windows".to_string(),
+                ),
+                (
+                    format!("{}\\npm\\claude.bat", appdata),
+                    "npm-windows".to_string(),
+                ),
+            ]);
+        }
+        
+        // Check USERPROFILE paths on Windows
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            paths_to_check.extend(vec![
+                (
+                    format!("{}\\AppData\\Roaming\\npm\\claude", userprofile),
+                    "npm-userprofile".to_string(),
+                ),
+                (
+                    format!("{}\\AppData\\Roaming\\npm\\claude.cmd", userprofile),
+                    "npm-userprofile".to_string(),
+                ),
+                (
+                    format!("{}\\AppData\\Roaming\\npm\\claude.bat", userprofile),
+                    "npm-userprofile".to_string(),
+                ),
+            ]);
+        }
+    }
+
+    // Also check user-specific paths (Unix-style)
     if let Ok(home) = std::env::var("HOME") {
         paths_to_check.extend(vec![
             (
