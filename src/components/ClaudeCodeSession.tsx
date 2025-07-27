@@ -519,29 +519,58 @@ export const ClaudeCodeSession: React.FC<ClaudeCodeSessionProps> = ({
 
             const message = JSON.parse(payload) as ClaudeStreamMessage;
             
-            // Add message deduplication to prevent 4x duplication from multiple listeners
-            const messageKey = `${message.type}-${message.timestamp || Date.now()}-${JSON.stringify(message.content || message.message || message.result || '').slice(0, 50)}`;
-            
+            // Enhanced message deduplication to prevent duplicates from multiple listeners
             setMessages((prev) => {
-              // Check if message already exists by ID (primary) or content similarity (fallback)
-              const exists = prev.some(msg => {
-                // Primary check: same message ID
-                if (message.id && msg.id && message.id === msg.id) return true;
+              // Extract content for comparison (try multiple possible fields)
+              const getMessageContent = (msg: any) => {
+                return msg.content || msg.message || msg.text || msg.result || msg.data || '';
+              };
+              
+              const currentContent = getMessageContent(message);
+              const currentContentStr = typeof currentContent === 'string' ? currentContent : JSON.stringify(currentContent);
+              
+              // Check if message already exists using multiple strategies
+              const exists = prev.some(existingMsg => {
+                // 1. Primary: Exact ID match
+                if (message.id && existingMsg.id && message.id === existingMsg.id) {
+                  return true;
+                }
                 
-                // Secondary check: same messageKey (handles cases without IDs)
-                if ((msg as any).messageKey === messageKey) return true;
+                // 2. Secondary: Same type and exact content match (for text messages)
+                if (message.type === existingMsg.type) {
+                  const existingContent = getMessageContent(existingMsg);
+                  const existingContentStr = typeof existingContent === 'string' ? existingContent : JSON.stringify(existingContent);
+                  
+                  if (currentContentStr && existingContentStr && currentContentStr === existingContentStr) {
+                    return true;
+                  }
+                }
                 
-                // Tertiary check: exact JSON match (final fallback)  
-                return JSON.stringify(msg) === JSON.stringify(message);
+                // 3. Tertiary: Complete JSON match (exact duplicate)
+                try {
+                  const currentJson = JSON.stringify(message);
+                  const existingJson = JSON.stringify(existingMsg);
+                  if (currentJson === existingJson) {
+                    return true;
+                  }
+                } catch (e) {
+                  // Ignore JSON stringify errors
+                }
+                
+                return false;
               });
               
               if (exists) {
-                console.log('Duplicate message prevented:', messageKey);
+                console.log('Duplicate message prevented:', {
+                  type: message.type,
+                  content: currentContentStr.slice(0, 100) + '...',
+                  id: message.id
+                });
                 return prev;
               }
               
-              // Add messageKey to the message for future deduplication
-              return [...prev, { ...message, messageKey }];
+              // Message is unique, add it
+              return [...prev, message];
             });
           } catch (err) {
             console.error('Failed to parse message:', err, payload);
