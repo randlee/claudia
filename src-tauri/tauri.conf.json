@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "claudia.asterisk.so",
   "build": {
-    "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1421",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -47,5 +47,8 @@
     "shell": {
       "open": true
     }
+  },
+  "bundle": {
+    "active": false
   }
 }
